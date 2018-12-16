@@ -1,0 +1,24 @@
+{
+    "name": "MiFlowers",
+    "version": "0.0.1",
+    "description": "Mi Flowers monitor",
+    "main": "main.js",
+    "keywords": [
+        "xiaomi",
+        "mi",
+        "flora",
+        "node",
+        "javascript"
+    ],
+    "author": "Philippe Tjon-A-Hen",
+    "license": "MIT",
+    "dependencies": {
+        "bluetooth-hci-socket": "^0.5.1",
+        "noble": "^1.7.0",
+        "node-bluetooth": "^1.2.4",
+        "node-mi-flora": "^0.1.1"
+    },
+    "engines": {
+        "node": ">=6.9"
+    }
+}
