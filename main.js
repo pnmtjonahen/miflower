@@ -75,21 +75,6 @@ function debugCharacteristics(peripheral, dataCharacteristic, realtimeCharacteri
  */
 function setupPeripheral(peripheral, reconnect) {
 
-
-    function onDisconnect() {
-        logger.debug(`peripheral=${peripheral.id} disconnect will re-connect in ${cliOptions.reconnect} seconds`);
-
-        setTimeout(() => {
-            logger.debug(`peripheral=${peripheral.id} re-connect`);
-            setupPeripheral(peripheral, true);
-        }, cliOptions.reconnect);
-
-    }
-    if (reconnect) {
-        peripheral.removeListener('disconnect', onDisconnect);
-    }
-    peripheral.once('disconnect', onDisconnect);
-
     peripheral.connect((e) => {
         if (e) {
             logger.error(`peripheral=${peripheral.id} connect - error :`, e);
@@ -126,7 +111,10 @@ function setupPeripheral(peripheral, reconnect) {
                 }
             });
 
-            logger.debug(`peripheral=${peripheral.id} characteristics=${firmwareCharacteristic.uuid} firmware:write - write a magic number so we can read the current data`);
+
+// https://www.open-homeautomation.com/2016/08/23/reverse-engineering-the-mi-plant-sensor/
+// write a magic number so we can read the current data
+            logger.debug(`peripheral=${peripheral.id} characteristics=${firmwareCharacteristic.uuid} firmware:write`);
             realtimeCharacteristic.write(REALTIME_META_VALUE, false);
 
             dataCharacteristic.read((error, data) => {
@@ -140,7 +128,19 @@ function setupPeripheral(peripheral, reconnect) {
                 let fertility = data.readUInt16LE(8);
                 logger.info(`peripheral=${peripheral.id} data={"deviceId": "${peripheral.id}", "temperature": ${temperature}, "lux": ${lux}, "moisture": ${moisture}, "fertility": ${fertility} }`);
 
-                peripheral.disconnect();
+                peripheral.disconnect((error) => {
+                    if (error) {
+                        logger.error(`peripheral=${peripheral.id} disconnect error :`, error);
+                        return;
+                    }
+                    logger.debug(`peripheral=${peripheral.id} disconnect will re-connect in ${cliOptions.reconnect} seconds`);
+
+                    setTimeout(() => {
+                        logger.debug(`peripheral=${peripheral.id} re-connect`);
+                        setupPeripheral(peripheral, true);
+                    }, cliOptions.reconnect);
+
+                });
             });
         });
     });
