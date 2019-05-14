@@ -28,9 +28,9 @@ noble.on('discover', function (peripheral) {
     logger.debug(`peripheral=${peripheral.id} discover : ${peripheral}`);
 
     if (peripheral.state === 'disconnected') {
-        if (!peripherals.find((p) => p.id === peripheral.id)) {
-            peripherals.push(peripheral);
-            setupPeripheral(peripheral, false);
+        if (!peripherals.find((p) => p.peripheral.id === peripheral.id)) {
+            peripherals.push({peripheral:peripheral, last:Date.now()});
+            setupPeripheral(peripheral);
         } else {
             logger.debug(`peripheral=${peripheral.id} found same peripheral in state ${peripheral.state} ignoring...`);
         }
@@ -46,21 +46,21 @@ function debugCharacteristics(peripheral, dataCharacteristic, realtimeCharacteri
 
     dataCharacteristic.discoverDescriptors((error, descriptors) => {
         if (error) {
-            logger.error(`peripheral=${peripheral.id} characteristics=${dataCharacteristic.uuid} data:discoverDescriptor - error :`, error);
+            logger.error(`peripheral=${peripheral.id} characteristics=${dataCharacteristic.uuid} data:discoverDescriptor - error :${error}`);
         } else {
             logger.debug(`peripheral=${peripheral.id} characteristics=${dataCharacteristic.uuid} data:discoverDescriptor ${descriptors}`);
         }
     });
     realtimeCharacteristic.discoverDescriptors((error, descriptors) => {
         if (error) {
-            logger.error(`peripheral=${peripheral.id} characteristics=${realtimeCharacteristic.uuid} realtime:discoverDescriptor - error :`, error);
+            logger.error(`peripheral=${peripheral.id} characteristics=${realtimeCharacteristic.uuid} realtime:discoverDescriptor - error :${error}`);
         } else {
             logger.debug(`peripheral=${peripheral.id} characteristics=${realtimeCharacteristic.uuid} realtime:discoverDescriptor ${descriptors}`);
         }
     });
     firmwareCharacteristic.discoverDescriptors((error, descriptors) => {
         if (error) {
-            logger.error(`peripheral=${peripheral.id} characteristics=${firmwareCharacteristic.uuid} firmware:discoverDescriptor - error :`, error);
+            logger.error(`peripheral=${peripheral.id} characteristics=${firmwareCharacteristic.uuid} firmware:discoverDescriptor - error :${error}`);
         } else {
             logger.debug(`peripheral=${peripheral.id} characteristics=${firmwareCharacteristic.uuid} firmware:discoverDescriptor ${descriptors}`);
         }
@@ -68,21 +68,42 @@ function debugCharacteristics(peripheral, dataCharacteristic, realtimeCharacteri
 
 }
 
+function reConnect(peripheral) {
+    peripheral.disconnect((error) => {
+        if (error) {
+            logger.error(`peripheral=${peripheral.id} disconnect error :${error}`);
+            return;
+        }
+        logger.debug(`peripheral=${peripheral.id} disconnect will re-connect in ${cliOptions.reconnect} seconds`);
+
+        setTimeout(() => {
+            logger.debug(`peripheral=${peripheral.id} re-connect`);
+            setupPeripheral(peripheral);
+        }, cliOptions.reconnect);
+
+    });
+
+}
 /**
  * setup the peripheral event handlers and connect to it. 
  * @param {type} peripheral the peripheral to setup
- * @param {type} reconnect are we reconecting? 
  */
-function setupPeripheral(peripheral, reconnect) {
+function setupPeripheral(peripheral) {
 
-    peripheral.connect((e) => {
-        if (e) {
-            logger.error(`peripheral=${peripheral.id} connect - error :`, e);
+    peripheral.connect((error) => {
+        if (error) {
+            logger.error(`peripheral=${peripheral.id} connect - error :${error}`);
+            reConnect(peripheral);
             return;
         }
         logger.debug(`peripheral=${peripheral.id} connected`);
 
         peripheral.discoverSomeServicesAndCharacteristics(SERVICE_UUIDS, CHARACTERISTIC_UUIDS, function (error, services, characteristics) {
+            if (error) {
+                logger.error(`peripheral=${peripheral.id} discover error ${error}`);
+                reConnect(peripheral);
+                return;
+            }
             logger.debug(`peripheral=${peripheral.id} discover DATA-SERVICES - services=${services} - characteristics=${characteristics}`);
             let dataCharacteristic;
             let realtimeCharacteristic;
@@ -105,21 +126,20 @@ function setupPeripheral(peripheral, reconnect) {
 
             firmwareCharacteristic.read((error, data) => {
                 if (error) {
-                    logger.error(`peripheral=${peripheral.id} characteristics=${firmwareCharacteristic.uuid} firmware:read - error :`, error);
+                    logger.error(`peripheral=${peripheral.id} characteristics=${firmwareCharacteristic.uuid} firmware:read - error :${error}`);
                 } else {
                     logger.info(`peripheral=${peripheral.id} characteristics=${firmwareCharacteristic.uuid} firmware={ "deviceId": "${peripheral.id}", "batteryLevel": ${parseInt(data.toString('hex', 0, 1), 16)}, "firmwareVersion": "${data.toString('ascii', 2, data.length)}" } }`);
                 }
             });
 
 
-// https://www.open-homeautomation.com/2016/08/23/reverse-engineering-the-mi-plant-sensor/
 // write a magic number so we can read the current data
             logger.debug(`peripheral=${peripheral.id} characteristics=${firmwareCharacteristic.uuid} firmware:write`);
             realtimeCharacteristic.write(REALTIME_META_VALUE, false);
 
             dataCharacteristic.read((error, data) => {
                 if (error) {
-                    logger.error(`peripheral=${peripheral.id} characteristics=${dataCharacteristic.uuid} read error :`, error);
+                    logger.error(`peripheral=${peripheral.id} characteristics=${dataCharacteristic.uuid} read error :${error}`);
                     return;
                 }
                 let temperature = data.readUInt16LE(0) / 10;
@@ -127,20 +147,8 @@ function setupPeripheral(peripheral, reconnect) {
                 let moisture = data.readUInt16BE(6);
                 let fertility = data.readUInt16LE(8);
                 logger.info(`peripheral=${peripheral.id} data={"deviceId": "${peripheral.id}", "temperature": ${temperature}, "lux": ${lux}, "moisture": ${moisture}, "fertility": ${fertility} }`);
-
-                peripheral.disconnect((error) => {
-                    if (error) {
-                        logger.error(`peripheral=${peripheral.id} disconnect error :`, error);
-                        return;
-                    }
-                    logger.debug(`peripheral=${peripheral.id} disconnect will re-connect in ${cliOptions.reconnect} seconds`);
-
-                    setTimeout(() => {
-                        logger.debug(`peripheral=${peripheral.id} re-connect`);
-                        setupPeripheral(peripheral, true);
-                    }, cliOptions.reconnect);
-
-                });
+                peripherals.find(p => p.peripheral.id === peripheral.id).last = Date.now();
+                reConnect(peripheral);
             });
         });
     });
@@ -154,8 +162,10 @@ noble.on('scanStop', () => {
     logger.debug('noble:onScanStop');
     if (peripherals.length < cliOptions.nrdevices) {
         setTimeout(() => {
-            noble.startScanning([], true, (e) => {
-                logger.error("noble:startScanning ", e);
+            noble.startScanning([], true, (error) => {
+                if (error) {
+                    logger.error(`noble:startScanning ${error}`);
+                }
             });
         }, cliOptions.rescan); // rescan after x seconds
 
@@ -169,14 +179,28 @@ noble.on('warning', (message) => {
 noble.on('stateChange', (state) => {
     logger.debug(`noble:onStateChange : ${state}`);
     if (state === 'poweredOn') {
-        noble.startScanning([], true, (e) => {
-            logger.error("noble:startScanning ", e);
+        noble.startScanning([], true, (error) => {
+            if (error) {
+                logger.error(`noble:startScanning ${error}`);
+            }
         });
     } else {
         noble.stopScanning();
     }
 });
 
+/*
+ * Workaround for a bug, number of issues are reported that when a disconnect takes place during connect, no error is correctly propocated
+ * So we wait 2 * reconnect timeout and find all peripherals that have not reported any data, disconnect them. and reconntect. 
+ *
+ */
+setInterval(() => {
+    logger.debug("house keeping checking for stale connections...");
+    peripherals.filter((p) => p.last < (Date.now() - (2 * cliOptions.reconnect))).forEach((p) => {
+        logger.debug(`peripheral=${p.peripheral.id} no data since ${new Date(p.last).toISOString()} reConnecting..`);
+        reConnect(p.peripheral);
+    });
+}, cliOptions.reconnect);
 
 function handle(signal) {
     noble.stopScanning((e) => {

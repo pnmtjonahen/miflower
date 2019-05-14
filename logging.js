@@ -30,10 +30,6 @@ class Logger {
         if ((this.level & ERROR) === ERROR)
             console.log("%s %s ERROR - %s", new Date().toISOString(), this.logger, message);
     }
-    error(message, error) {
-        if ((this.level & ERROR) === ERROR && error)
-            console.log("%s %s ERROR - %s%s", new Date().toISOString(), this.logger, message, error);
-    }
 
 }
 
